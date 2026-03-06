@@ -1,0 +1,99 @@
+#!/bin/bash
+# rm - remove files or directories
+# Minimal rm for Lumen - supports -f, -r/-R, -i, -v
+# Very careful implementation: never removes / or /boot by accident
+
+usage() {
+    cat <<EOF
+Usage: rm [OPTION]... FILE...
+Remove (unlink) the FILE(s).
+
+  -f, --force           ignore nonexistent files and arguments, never prompt
+  -i                    prompt before every removal
+  -r, -R, --recursive   remove directories and their contents recursively
+  -v, --verbose         explain what is being done
+  -h, --help            display this help and exit
+EOF
+    exit 0
+}
+
+FORCE=0
+INTERACTIVE=0
+RECURSIVE=0
+VERBOSE=0
+TARGETS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--force)         FORCE=1; INTERACTIVE=0 ;;
+        -i)                 INTERACTIVE=1; FORCE=0 ;;
+        -r|-R|--recursive)  RECURSIVE=1 ;;
+        -v|--verbose)       VERBOSE=1 ;;
+        -h|--help)          usage ;;
+        -*)
+            echo "rm: invalid option -- '$1'" >&2
+            exit 1
+            ;;
+        *) TARGETS+=("$1") ;;
+    esac
+    shift
+done
+
+if [ ${#TARGETS[@]} -eq 0 ]; then
+    echo "rm: missing operand" >&2
+    usage
+    exit 1
+fi
+
+do_remove() {
+    local target="$1"
+
+    if [ ! -e "$target" ] && [ $FORCE -eq 0 ]; then
+        echo "rm: cannot remove '$target': No such file or directory" >&2
+        return 1
+    fi
+
+    # Safety: never allow rm -rf / or dangerous root paths
+    if [ "$target" = "/" ] || [ "$target" = "" ] || [[ "\( target" =\~ ^//+ \) ]]; then
+        echo "rm: refusing to remove root directory '/'" >&2
+        exit 1
+    fi
+
+    if [ -d "$target" ] && [ ! -L "$target" ]; then
+        if [ $RECURSIVE -eq 0 ]; then
+            echo "rm: cannot remove '$target': Is a directory" >&2
+            return 1
+        fi
+        # Recursive directory removal
+        for item in "$target"/* "$target"/.[!.]* "$target"/..?*; do
+            [ -e "$item" ] || continue
+            do_remove "$item"
+        done
+    fi
+
+    if [ $INTERACTIVE -eq 1 ] && [ $FORCE -eq 0 ]; then
+        local type="file"
+        [ -d "$target" ] && type="directory"
+        read -p "rm: remove $type '$target'? " ans < /dev/tty
+        case "$ans" in
+            [Yy]*) ;;
+            *) return 0 ;;
+        esac
+    fi
+
+    if [ $VERBOSE -eq 1 ]; then
+        echo "removed '$target'"
+    fi
+
+    rm -f "$target" 2>/dev/null || {
+        echo "rm: cannot remove '$target': Permission denied" >&2
+        return 1
+    }
+}
+
+for tgt in "${TARGETS[@]}"; do
+    # Expand wildcards ourselves if needed (bash already does it)
+    do_remove "$tgt"
+done
+
+exit 0

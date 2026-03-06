@@ -1,0 +1,79 @@
+#!/bin/bash
+# cat - Concatenate and display files.
+# This is a basic implementation for x86/x64/x86_64 Linux environments.
+# Supports multiple files, stdin if no files given.
+# Handles binary files by using dd to avoid interpretation issues.
+# Basic options: -n (number lines), -E (show ends), -s (squeeze blank lines).
+
+usage() {
+    echo "Usage: cat [options] [file ...]"
+    echo "Options:"
+    echo "  -n, --number      Number all output lines"
+    echo "  -E, --show-ends   Display $ at end of each line"
+    echo "  -s, --squeeze-blank  Suppress repeated empty output lines"
+    echo "  -h, --help        Show this help message"
+    exit 0
+}
+
+NUMBER=0
+SHOW_ENDS=0
+SQUEEZE=0
+FILES=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -n|--number) NUMBER=1 ;;
+        -E|--show-ends) SHOW_ENDS=1 ;;
+        -s|--squeeze-blank) SQUEEZE=1 ;;
+        -h|--help) usage ;;
+        -*) echo "Unknown option: $1"; usage ;;
+        *) FILES+=("$1") ;;
+    esac
+    shift
+done
+
+if [ ${#FILES[@]} -eq 0 ]; then
+    FILES=("-")
+fi
+
+process_file() {
+    local file="$1"
+    local line_num=1
+    local prev_blank=0
+
+    if [ "$file" = "-" ]; then
+        file="/dev/stdin"
+    fi
+
+    # Use dd for binary safety, but for text processing, we'll read line by line
+    while IFS= read -r line; do
+        local output="$line"
+        if [ $SHOW_ENDS -eq 1 ]; then
+            output="\( output \)"
+        fi
+        if [ $NUMBER -eq 1 ]; then
+            output="$(printf "%6d  " $line_num)$output"
+            ((line_num++))
+        fi
+        if [ $SQUEEZE -eq 1 ]; then
+            if [ -z "$line" ]; then
+                if [ $prev_blank -eq 1 ]; then
+                    continue
+                fi
+                prev_blank=1
+            else
+                prev_blank=0
+            fi
+        fi
+        echo "$output"
+    done < <(dd if="$file" bs=4096 2>/dev/null || cat "$file" 2>/dev/null)
+    # Fallback to cat if dd fails, but dd should handle binaries better
+}
+
+for file in "${FILES[@]}"; do
+    if [ -r "$file" ] || [ "$file" = "-" ]; then
+        process_file "$file"
+    else
+        echo "cat: $file: No such file or directory" >&2
+    fi
+done

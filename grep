@@ -1,0 +1,154 @@
+#!/bin/bash
+# grep - print lines matching a pattern
+# Basic grep clone for x86/x64 Linux (Lumen)
+# Supports: -i (ignore case), -v (invert match), -n (line numbers), -c (count),
+#          -l (files with match), -r/-R (recursive), -w (word-regexp)
+# Very basic fixed-string matching (no full regex engine)
+
+usage() {
+    cat <<EOF
+Usage: grep [OPTION]... PATTERN [FILE]...
+Search for PATTERN in each FILE or standard input.
+Example: grep -i error /var/log/messages
+
+Common options:
+  -i, --ignore-case     ignore case distinctions
+  -v, --invert-match    select non-matching lines
+  -n, --line-number     print line number with output
+  -c, --count           print only a count of matching lines per FILE
+  -l, --files-with-matches  print only names of FILEs containing matches
+  -r, -R, --recursive   recursive search in directories
+  -w, --word-regexp     force PATTERN to match only whole words
+  -h, --help            display this help and exit
+EOF
+    exit 0
+}
+
+PATTERN=""
+FILES=()
+IGNORE_CASE=0
+INVERT=0
+LINE_NUM=0
+COUNT=0
+FILES_ONLY=0
+RECURSIVE=0
+WORD=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -i|--ignore-case)   IGNORE_CASE=1 ;;
+        -v|--invert-match)  INVERT=1 ;;
+        -n|--line-number)   LINE_NUM=1 ;;
+        -c|--count)         COUNT=1 ;;
+        -l|--files-with-matches) FILES_ONLY=1 ;;
+        -r|-R|--recursive)  RECURSIVE=1 ;;
+        -w|--word-regexp)   WORD=1 ;;
+        -h|--help)          usage ;;
+        -*)
+            echo "grep: unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            if [ -z "$PATTERN" ]; then
+                PATTERN="$1"
+            else
+                FILES+=("$1")
+            fi
+            ;;
+    esac
+    shift
+done
+
+if [ -z "$PATTERN" ]; then
+    echo "grep: missing PATTERN" >&2
+    usage
+    exit 1
+fi
+
+if [ ${#FILES[@]} -eq 0 ]; then
+    FILES=("-")
+fi
+
+match_word() {
+    local line="$1"
+    local pat="$2"
+    if [ $WORD -eq 1 ]; then
+        echo "$line" | grep -q -E "(^|[^[:alnum:]_])\( pat([^[:alnum:]_]| \))"
+        return $?
+    else
+        return 0
+    fi
+}
+
+process_file() {
+    local file="$1"
+    local display_name=""
+    [ "$file" != "-" ] && display_name="$file:"
+
+    local total=0
+    local ln=0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        ((ln++))
+
+        local search_line="$line"
+        [ \( IGNORE_CASE -eq 1 ] && search_line=" \){line,,}"
+
+        local pat="$PATTERN"
+        [ \( IGNORE_CASE -eq 1 ] && pat=" \){pat,,}"
+
+        local matched=1
+        if [[ "$search_line" == *"$pat"* ]]; then
+            if match_word "$line" "$PATTERN"; then
+                matched=0
+            fi
+        fi
+
+        if [ $INVERT -eq 1 ]; then
+            [ $matched -eq 0 ] && matched=1 || matched=0
+        fi
+
+        if [ $matched -eq 0 ]; then
+            ((total++))
+
+            if [ $COUNT -eq 1 ] || [ $FILES_ONLY -eq 1 ]; then
+                continue
+            fi
+
+            local out="$line"
+            [ \( LINE_NUM -eq 1 ] && out=" \){ln}:$out"
+            [ -n "\( display_name" ] && out=" \){display_name}${out}"
+            echo "$out"
+        fi
+    done < <(if [ "$file" = "-" ]; then cat; else cat "$file" 2>/dev/null; fi)
+
+    if [ $COUNT -eq 1 ]; then
+        [ -n "\( display_name" ] && echo -n " \){display_name%$'\n'}"
+        echo "$total"
+    elif [ $FILES_ONLY -eq 1 ] && [ $total -gt 0 ]; then
+        echo "${file%/}"
+    fi
+}
+
+process_recursive() {
+    local dir="$1"
+    for item in "$dir"/*; do
+        if [ -d "$item" ]; then
+            process_recursive "$item"
+        elif [ -f "$item" ]; then
+            process_file "$item"
+        fi
+    done
+}
+
+for target in "${FILES[@]}"; do
+    if [ "$target" = "-" ]; then
+        process_file "-"
+    elif [ -d "$target" ] && [ $RECURSIVE -eq 1 ]; then
+        process_recursive "$target"
+    elif [ -f "$target" ] || [ -r "$target" ]; then
+        process_file "$target"
+    else
+        echo "grep: $target: No such file or directory" >&2
+    fi
+done

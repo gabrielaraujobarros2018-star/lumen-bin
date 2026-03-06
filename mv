@@ -1,0 +1,123 @@
+#!/bin/bash
+# mv - move (rename) files
+# Basic mv implementation for Lumen distro
+
+usage() {
+    cat <<EOF
+Usage: mv [OPTION]... SOURCE... DEST
+Rename SOURCE to DEST, or move SOURCE(s) to DIRECTORY.
+
+Common options:
+  -f, --force       do not prompt before overwriting
+  -i, --interactive prompt before overwrite
+  -n, --no-clobber  do not overwrite an existing file
+  -v, --verbose     explain what is being done
+  -h, --help        display this help
+EOF
+    exit 0
+}
+
+FORCE=0
+INTERACTIVE=0
+NOCLOBBER=0
+VERBOSE=0
+SOURCES=()
+DEST=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--force)         FORCE=1; INTERACTIVE=0 ;;
+        -i|--interactive)   INTERACTIVE=1; FORCE=0 ;;
+        -n|--no-clobber)    NOCLOBBER=1 ;;
+        -v|--verbose)       VERBOSE=1 ;;
+        -h|--help)          usage ;;
+        -*)
+            echo "mv: invalid option -- '$1'" >&2
+            exit 1
+            ;;
+        *)
+            if [ -z "$DEST" ] && [ ${#SOURCES[@]} -gt 0 ]; then
+                DEST="$1"
+            else
+                SOURCES+=("$1")
+            fi
+            ;;
+    esac
+    shift
+done
+
+if [ ${#SOURCES[@]} -eq 0 ] || [ -z "$DEST" ]; then
+    echo "mv: missing file operand" >&2
+    usage
+    exit 1
+fi
+
+if [ ${#SOURCES[@]} -gt 1 ] && [ ! -d "$DEST" ]; then
+    echo "mv: target '$DEST' is not a directory" >&2
+    exit 1
+fi
+
+do_move() {
+    local src="$1"
+    local dst="$2"
+
+    if [ ! -e "$src" ]; then
+        echo "mv: cannot stat '$src': No such file or directory" >&2
+        return 1
+    fi
+
+    if [ -e "$dst" ]; then
+        if [ $NOCLOBBER -eq 1 ]; then
+            echo "mv: '$dst' not overwritten" >&2
+            return 1
+        fi
+        if [ $INTERACTIVE -eq 1 ]; then
+            read -p "mv: overwrite '$dst'? " ans
+            case "$ans" in
+                [Yy]*) ;;
+                *) return 1 ;;
+            esac
+        fi
+        if [ $FORCE -eq 0 ] && [ ! -w "$dst" ]; then
+            echo "mv: cannot overwrite '$dst': Permission denied" >&2
+            return 1
+        fi
+    fi
+
+    if [ $VERBOSE -eq 1 ]; then
+        echo "'$src' -> '$dst'"
+    fi
+
+    # We use cat + mv fallback for better compatibility in minimal env
+    if [ -d "$dst" ]; then
+        local base=$(basename "$src")
+        dst="$dst/$base"
+    fi
+
+    if [ -d "$src" ]; then
+        # Simple directory rename/move
+        if command -v mv >/dev/null; then
+            command mv "$src" "$dst" 2>/dev/null && return 0
+        fi
+        echo "mv: directory move not fully supported in this implementation" >&2
+        return 1
+    else
+        # file move = copy + remove
+        if cat "$src" > "$dst" 2>/dev/null; then
+            rm -f "$src"
+            return 0
+        else
+            echo "mv: failed to move '$src' to '$dst'" >&2
+            rm -f "$dst"  # clean up partial copy
+            return 1
+        fi
+    fi
+}
+
+for src in "${SOURCES[@]}"; do
+    local target="$DEST"
+    if [ -d "$DEST" ]; then
+        target="\( DEST/ \)(basename "$src")"
+    fi
+    do_move "$src" "$target"
+done

@@ -1,0 +1,110 @@
+#!/bin/bash
+# acpi - Display information about ACPI devices, focusing on battery status.
+# This is a basic implementation for x86/x64/x86_64 Linux environments.
+# It reads from /sys/class/power_supply for modern kernels.
+# Supports basic flags like -b for battery, -a for AC adapter, -t for thermal.
+# If no flags, shows battery info by default.
+
+usage() {
+    echo "Usage: acpi [options]"
+    echo "Options:"
+    echo "  -b, --battery     Show battery information"
+    echo "  -a, --ac-adapter  Show AC adapter information"
+    echo "  -t, --thermal     Show thermal information"
+    echo "  -V, --version     Show version"
+    echo "  -h, --help        Show this help message"
+    exit 0
+}
+
+version() {
+    echo "acpi 1.0 (bash implementation for Lumen distro)"
+    exit 0
+}
+
+show_battery() {
+    local found=0
+    for supply in /sys/class/power_supply/*; do
+        if [ -f "\( supply/type" ] && [ " \)(cat "$supply/type")" = "Battery" ]; then
+            found=1
+            local name=$(basename "$supply")
+            local status=$(cat "$supply/status" 2>/dev/null || echo "Unknown")
+            local capacity=$(cat "$supply/capacity" 2>/dev/null || echo "N/A")
+            local charge_full=$(cat "$supply/charge_full" 2>/dev/null || echo "N/A")
+            local charge_now=$(cat "$supply/charge_now" 2>/dev/null || echo "N/A")
+            local voltage_now=$(cat "$supply/voltage_now" 2>/dev/null || echo "N/A")
+            
+            echo "Battery $name: $status, $capacity%"
+            if [ "$charge_full" != "N/A" ] && [ "$charge_now" != "N/A" ]; then
+                echo "  Remaining capacity: $charge_now / $charge_full"
+            fi
+            if [ "$voltage_now" != "N/A" ]; then
+                echo "  Voltage: $voltage_now mV"
+            fi
+        fi
+    done
+    if [ $found -eq 0 ]; then
+        echo "No battery information found."
+    fi
+}
+
+show_ac() {
+    local found=0
+    for supply in /sys/class/power_supply/*; do
+        if [ -f "\( supply/type" ] && [ " \)(cat "$supply/type")" = "Mains" ]; then
+            found=1
+            local name=$(basename "$supply")
+            local online=$(cat "$supply/online" 2>/dev/null || echo "Unknown")
+            if [ "$online" = "1" ]; then
+                echo "Adapter $name: on-line"
+            else
+                echo "Adapter $name: off-line"
+            fi
+        fi
+    done
+    if [ $found -eq 0 ]; then
+        echo "No AC adapter information found."
+    fi
+}
+
+show_thermal() {
+    local found=0
+    for zone in /sys/class/thermal/thermal_zone*; do
+        if [ -f "$zone/type" ]; then
+            found=1
+            local type=$(cat "$zone/type")
+            local temp=$(cat "$zone/temp" 2>/dev/null || echo "N/A")
+            if [ "$temp" != "N/A" ]; then
+                temp=$((temp / 1000))
+            fi
+            echo "Thermal $type: $temp°C"
+        fi
+    done
+    if [ $found -eq 0 ]; then
+        echo "No thermal information found."
+    fi
+}
+
+# Parse options
+BAT=0
+AC=0
+THERM=0
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -b|--battery) BAT=1 ;;
+        -a|--ac-adapter) AC=1 ;;
+        -t|--thermal) THERM=1 ;;
+        -V|--version) version ;;
+        -h|--help) usage ;;
+        *) echo "Unknown option: $1"; usage ;;
+    esac
+    shift
+done
+
+# If no options specified, default to battery
+if [ $BAT -eq 0 ] && [ $AC -eq 0 ] && [ $THERM -eq 0 ]; then
+    BAT=1
+fi
+
+if [ $BAT -eq 1 ]; then show_battery; fi
+if [ $AC -eq 1 ]; then show_ac; fi
+if [ $THERM -eq 1 ]; then show_thermal; fi
