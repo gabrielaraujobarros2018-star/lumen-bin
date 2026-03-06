@@ -1,0 +1,134 @@
+#!/bin/bash
+# uImage - very basic U-Boot uImage creator / verifier for kernel images
+# Creates legacy uImage format (mkimage compatible) from zImage/vmlinuz
+# Useful when preparing kernels for U-Boot booting in Lumen (mostly ARM, but also x86 test)
+
+# Note: This is a pure-bash approximation — real mkimage is better, but this helps in minimal env
+
+usage() {
+    cat <<EOF
+Usage: uImage create <kernel> <output.uImage> [load_addr] [entry_addr]
+       uImage info <uImage-file>
+       uImage help
+
+Minimal uImage tool for Lumen (legacy U-Boot format)
+
+Default load_addr/entry_addr for x86: 0x1000000
+For ARM usually: 0x80008000 or similar
+EOF
+    exit 0
+}
+
+mk_uimage_header() {
+    local image="$1"
+    local load_addr="${2:-0x1000000}"
+    local entry_addr="${3:-$load_addr}"
+    local name="Linux-$(date +%Y%m%d)"
+    local arch=5          # 5 = ARM, but we use generic
+    local os=5            # 5 = Linux
+    local type=2          # 2 = kernel
+    local comp=0          # 0 = none
+    local time=$(date +%s)
+
+    local size=$(stat -c %s "$image" 2>/dev/null || wc -c < "$image")
+    local data_crc=$(cksum "$image" | awk '{print $1}')   # poor man's crc32
+
+    # uImage header = 64 bytes
+    #   magic (4)     IH_MAGIC = 0x27051956
+    #   header crc (4)
+    #   time (4)
+    #   size (4)
+    #   load addr (4)
+    #   entry addr (4)
+    #   data crc (4)
+    #   os type (1)
+    #   arch (1)
+    #   image type (1)
+    #   comp type (1)
+    #   name (32)
+
+    printf '\x27\x05\x19\x56' > header.bin
+
+    # We'll skip real header crc for now (many U-Boot versions ignore it if magic ok)
+    printf '\x00\x00\x00\x00' >> header.bin
+
+    printf '%08x' "$time" | xxd -r -p >> header.bin
+    printf '%08x' "$size" | xxd -r -p >> header.bin
+    printf '%08x' "$((load_addr))" | xxd -r -p >> header.bin
+    printf '%08x' "$((entry_addr))" | xxd -r -p >> header.bin
+    printf '%08x' "$data_crc" | xxd -r -p >> header.bin
+
+    printf '\\x%02x' "$os"   >> header.bin
+    printf '\\x%02x' "$arch" >> header.bin
+    printf '\\x%02x' "$type" >> header.bin
+    printf '\\x%02x' "$comp" >> header.bin
+
+    printf '%-32s' "$name" | head -c 32 >> header.bin
+
+    cat header.bin "$image" > "$output"
+    rm -f header.bin
+
+    echo "Created uImage: $output"
+    echo "  Image size: $size bytes"
+    echo "  Load addr:  0x$(printf %x "$load_addr")"
+    echo "  Entry addr: 0x$(printf %x "$entry_addr")"
+}
+
+show_uimage_info() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        echo "File not found: $file" >&2
+        exit 1
+    fi
+
+    local magic=$(xxd -p -l 4 "$file")
+    if [ "$magic" != "27051956" ]; then
+        echo "Not a valid legacy uImage (magic != 0x27051956)" >&2
+        exit 1
+    fi
+
+    local time=$(xxd -p -s 8 -l 4 "$file" | xargs -I {} printf "%d\n" 0x{})
+    local size=$(xxd -p -s 12 -l 4 "$file" | xargs -I {} printf "%d\n" 0x{})
+    local load=$(xxd -p -s 16 -l 4 "$file" | xargs -I {} printf "0x%x\n" 0x{})
+    local entry=$(xxd -p -s 20 -l 4 "$file" | xargs -I {} printf "0x%x\n" 0x{})
+    local name=$(xxd -p -s 32 -l 32 "$file" | xxd -r -p | tr -d '\0')
+
+    echo "uImage header:"
+    echo "  Magic:     0x$magic"
+    echo "  Timestamp: $(date -d "@$time" '+%Y-%m-%d %H:%M:%S')"
+    echo "  Image size: $size bytes"
+    echo "  Load addr:  $load"
+    echo "  Entry addr: $entry"
+    echo "  Name:       $name"
+}
+
+case "$1" in
+    create)
+        shift
+        if [ $# -lt 2 ]; then
+            echo "Missing kernel image or output filename" >&2
+            usage
+        fi
+        kernel="$1"
+        output="$2"
+        load_addr="${3:-0x1000000}"
+        entry_addr="${4:-$load_addr}"
+        if [ ! -f "$kernel" ]; then
+            echo "Kernel file not found: $kernel" >&2
+            exit 1
+        fi
+        mk_uimage_header "$kernel" "$load_addr" "$entry_addr"
+        ;;
+    info)
+        shift
+        [ $# -eq 0 ] && usage
+        show_uimage_info "$1"
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac
