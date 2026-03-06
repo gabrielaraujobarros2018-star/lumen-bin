@@ -1,0 +1,67 @@
+#!/bin/bash
+# part - very simple partition lister (like lsblk but minimal)
+# Shows disk partitions from /proc/partitions + basic info from /sys
+
+usage() {
+    cat <<EOF
+Usage: part [disk]
+       part -l             list all partitions
+       part -h             this help
+
+Simple partition viewer for Lumen recovery/support environment
+EOF
+    exit 0
+}
+
+show_partitions() {
+    local filter="$1"
+
+    if [ ! -f /proc/partitions ]; then
+        echo "part: /proc/partitions not found" >&2
+        exit 1
+    fi
+
+    printf "%-8s %-6s %-10s %-8s %s\n" "NAME" "MAJ:MIN" "SIZE" "TYPE" "MODEL/SERIAL"
+
+    awk 'NR>2 && $4 != "" {
+        name = $4
+        size_kb = $3
+        size_gb = sprintf("%.1fG", size_kb / 1048576)
+        majmin = $1 ":" $2
+
+        # Try to detect type
+        type = (name \~ /[0-9]$/) ? "part" : "disk"
+
+        # Get model if disk
+        model=""
+        if (type == "disk") {
+            model_file="/sys/block/" name "/device/model"
+            if ( -f model_file ) model = gensub(/[ \t\n]+$/,"","g", gensub(/^[ \t]+/,"",1, system("cat " model_file " 2>/dev/null") ? "" : system("cat " model_file)))
+        }
+
+        print name " " majmin " " size_gb " " type " " model
+    }' /proc/partitions | while read -r line; do
+        name=$(echo "$line" | awk '{print $1}')
+        if [ -n "$filter" ] && [[ "$name" != "$filter"* ]]; then
+            continue
+        fi
+        echo "$line"
+    done | column -t
+}
+
+case "$1" in
+    -l|--list)
+        show_partitions ""
+        ;;
+    -h|--help)
+        usage
+        ;;
+    "")
+        # Default: show only disks (no numbers at end)
+        show_partitions "" | grep -v '[0-9]$'
+        ;;
+    *)
+        # Show specific disk or partition prefix (sda, nvme0n1, etc.)
+        show_partitions "$1"
+        ;;
+esac
