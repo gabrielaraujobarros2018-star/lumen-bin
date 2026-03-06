@@ -1,0 +1,84 @@
+#!/bin/bash
+# ip - minimal iproute2-like "ip" command
+# Only supports: ip addr, ip link, ip route (show only)
+
+usage() {
+    cat <<EOF
+Usage: ip [ OPTIONS ] OBJECT { COMMAND | help }
+minimal ip command for Lumen
+
+OBJECTS:
+  link     - network devices
+  addr     - protocol (IPv4/IPv6) address on a device
+  route    - routing table entry
+
+Common shortcuts:
+  ip a             = ip addr show
+  ip l             = ip link show
+  ip r             = ip route show
+EOF
+    exit 0
+}
+
+case "$1" in
+    addr|a|address)
+        shift
+        if [ "$1" = "show" ] || [ -z "$1" ]; then
+            ip -o addr show | while read -r line; do
+                echo "$line" | awk '
+                {
+                    iface = $2; gsub(/:/,"",iface)
+                    state = ($9 \~ /UP/) ? "UP" : "DOWN"
+                    print iface ": <" state "> mtu " $5
+                    for (i=10; i<=NF; i++) {
+                        if ($i \~ /^inet/) print "    " $i
+                        if ($i \~ /^inet6/) print "    " $i
+                    }
+                }'
+            done
+        else
+            echo "ip addr: only 'show' supported in this minimal version" >&2
+            exit 1
+        fi
+        ;;
+    link|l)
+        shift
+        if [ "$1" = "show" ] || [ -z "$1" ]; then
+            for dev in /sys/class/net/*; do
+                [ -d "$dev" ] || continue
+                iface=$(basename "$dev")
+                state=$(cat "$dev/operstate" 2>/dev/null || echo "unknown")
+                carrier=$(cat "$dev/carrier" 2>/dev/null || echo "0")
+                mtu=$(cat "$dev/mtu" 2>/dev/null || echo "?")
+                mac=$(cat "$dev/address" 2>/dev/null || echo "??:??:??:??:??:??")
+                echo "\( iface: < \)( [ "\( state" = "up" ] && echo "UP" || echo "DOWN" ), \)( [ "$carrier" = "1" ] && echo "LOWER_UP" )> mtu $mtu qdisc pfifo_fast state ${state^^}"
+                echo "    link/ether $mac brd ff:ff:ff:ff:ff:ff"
+            done
+        else
+            echo "ip link: only 'show' supported" >&2
+            exit 1
+        fi
+        ;;
+    route|r)
+        shift
+        if [ "$1" = "show" ] || [ -z "$1" ]; then
+            if command -v ip >/dev/null 2>&1; then
+                ip route show
+            else
+                # Very crude fallback
+                echo "default via $(awk '/default/ {print $3}' /proc/net/route 2>/dev/null || echo '?') dev $(awk '/default/ {print $1}' /proc/net/route 2>/dev/null || echo '?')"
+                awk '$1 != "00000000" && $3 == "00000000" {printf "%s/%d dev %s\n", gensub(/(..)/,"\\1:", "g", $1), 32-log($2)/log(2), $5}' /proc/net/route 2>/dev/null
+            fi
+        else
+            echo "ip route: only 'show' supported in minimal version" >&2
+            exit 1
+        fi
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        echo "Object \"${1:-<none>}\" is unknown, try \"ip help\"" >&2
+        exit 1
+        ;;
+esac
