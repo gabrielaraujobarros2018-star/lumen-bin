@@ -1,0 +1,93 @@
+#!/bin/bash
+# wayland - minimal Wayland session / compositor checker & info tool
+# Shows running Wayland compositors, $WAYLAND_DISPLAY, basic protocol support check
+# Useful in Lumen live/recovery to debug graphical sessions or choose between X11/Wayland
+
+usage() {
+    cat <<EOF
+Usage: wayland [command]
+Commands:
+  status          Show current Wayland session status (default)
+  display         Show value of \$WAYLAND_DISPLAY
+  check-compositor  Try to detect running compositor (sway, weston, labwc, etc.)
+  clients         List Wayland client processes (very basic)
+  help            This help
+
+Minimal Wayland diagnostic tool for Lumen recovery/support environment
+EOF
+    exit 0
+}
+
+show_status() {
+    echo "Wayland session status:"
+    if [ -n "$WAYLAND_DISPLAY" ]; then
+        echo "  Active Wayland session detected"
+        echo "  WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
+        echo "  XDG_SESSION_TYPE=wayland"
+    else
+        echo "  No active Wayland session (WAYLAND_DISPLAY not set)"
+        if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+            echo "  Warning: XDG_SESSION_TYPE claims wayland but WAYLAND_DISPLAY is unset"
+        fi
+    fi
+
+    if [ -S "/run/user/$UID/wayland-0" ] || [ -S "/run/user/$UID/wayland-1" ]; then
+        echo "  Wayland socket found in /run/user/$UID/"
+    else
+        echo "  No Wayland socket found in standard location"
+    fi
+
+    if command -v weston >/dev/null; then echo "  weston available"; fi
+    if command -v sway    >/dev/null; then echo "  sway available"; fi
+    if command -v labwc   >/dev/null; then echo "  labwc available"; fi
+    if command -v cage    >/dev/null; then echo "  cage available"; fi
+}
+
+show_display() {
+    if [ -n "$WAYLAND_DISPLAY" ]; then
+        echo "$WAYLAND_DISPLAY"
+    else
+        echo "(unset)"
+        exit 1
+    fi
+}
+
+detect_compositor() {
+    local comp=""
+    if pgrep -x "sway" >/dev/null; then comp="sway"; fi
+    if pgrep -x "weston" >/dev/null; then comp="${comp:+$comp, }weston"; fi
+    if pgrep -x "labwc" >/dev/null; then comp="${comp:+$comp, }labwc"; fi
+    if pgrep -x "wayfire" >/dev/null; then comp="${comp:+$comp, }wayfire"; fi
+    if pgrep -x "cage" >/dev/null; then comp="${comp:+$comp, }cage"; fi
+    if pgrep -x "mutter" >/dev/null; then comp="${comp:+$comp, }gnome (mutter)"; fi
+    if pgrep -x "kwin_wayland" >/dev/null; then comp="${comp:+$comp, }plasma (kwin_wayland)"; fi
+
+    if [ -n "$comp" ]; then
+        echo "Detected Wayland compositor(s): $comp"
+    else
+        echo "No known Wayland compositor process found"
+    fi
+}
+
+list_clients() {
+    echo "Wayland client processes (basic heuristic):"
+    ps -eo pid,comm | grep -i -E 'gtk|qt|electron|firefox|chrome|chromium|libwayland|wayland' | grep -v grep || echo "  (none found)"
+}
+
+cmd="${1:-status}"
+shift
+
+case "$cmd" in
+    status)         show_status ;;
+    display)        show_display ;;
+    check-compositor|compositor) detect_compositor ;;
+    clients)        list_clients ;;
+    -h|--help|help) usage ;;
+    *)
+        echo "Unknown command: $cmd" >&2
+        usage
+        exit 1
+        ;;
+esac
+
+exit 0
