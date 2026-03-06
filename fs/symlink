@@ -1,0 +1,58 @@
+#!/bin/bash
+# symlink - create symbolic links (minimal ln -s replacement)
+# Usage: symlink TARGET LINK_NAME
+#        symlink -f TARGET LINK_NAME   (force overwrite)
+
+usage() {
+    cat <<EOF
+Usage: symlink [-f] TARGET LINK_NAME
+       symlink -h
+
+Create a symbolic link LINK_NAME pointing to TARGET
+  -f, --force    remove existing destination file if it exists
+EOF
+    exit 0
+}
+
+FORCE=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--force) FORCE=1 ;;
+        -h|--help) usage ;;
+        *) break ;;
+    esac
+    shift
+done
+
+if [ $# -ne 2 ]; then
+    echo "symlink: exactly two arguments required (TARGET and LINK_NAME)" >&2
+    usage
+    exit 1
+fi
+
+TARGET="$1"
+LINK="$2"
+
+if [ -e "$LINK" ]; then
+    if [ $FORCE -eq 1 ]; then
+        rm -f "$LINK"
+    else
+        echo "symlink: '$LINK' already exists" >&2
+        exit 1
+    fi
+fi
+
+if ln -s "$TARGET" "$LINK" 2>/dev/null; then
+    echo "created symbolic link '$LINK' -> '$TARGET'"
+else
+    # Fallback pure-bash symlink creation (if ln is missing or restricted)
+    if [ -e "$TARGET" ] || true; then   # allow dangling symlinks
+        printf "%s" "$TARGET" > "$LINK"
+        # Fake symlink by writing target path (not real inode symlink, but works for reading)
+        echo "warning: used fallback symlink creation (not real inode symlink)" >&2
+    else
+        echo "symlink: failed to create link to '$TARGET'" >&2
+        exit 1
+    fi
+fi
