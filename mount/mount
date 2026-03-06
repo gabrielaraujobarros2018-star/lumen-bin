@@ -1,0 +1,77 @@
+#!/bin/bash
+# mount - mount a filesystem
+# Very minimal mount — supports basic device + mountpoint + fstype + options
+
+usage() {
+    cat <<EOF
+Usage: mount [-t fstype] [-o options] device mountpoint
+       mount -a                  mount all from /etc/fstab
+       mount                     list current mounts
+       mount -h
+
+Minimal mount utility for Lumen recovery/support environment
+EOF
+    exit 0
+}
+
+FSTYPE=""
+OPTIONS=""
+DEVICE=""
+MOUNTPOINT=""
+ALL=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -t) shift; FSTYPE="$1" ;;
+        -o) shift; OPTIONS="$1" ;;
+        -a) ALL=1 ;;
+        -h|--help) usage ;;
+        *)
+            if [ -z "$DEVICE" ]; then
+                DEVICE="$1"
+            elif [ -z "$MOUNTPOINT" ]; then
+                MOUNTPOINT="$1"
+            else
+                echo "mount: too many arguments" >&2
+                usage
+            fi
+            ;;
+    esac
+    shift
+done
+
+if [ $ALL -eq 1 ]; then
+    if [ ! -f /etc/fstab ]; then
+        echo "mount -a: /etc/fstab not found" >&2
+        exit 1
+    fi
+    echo "mount -a not fully implemented yet — manual mount required" >&2
+    exit 1
+fi
+
+if [ -z "$DEVICE" ] && [ -z "$MOUNTPOINT" ]; then
+    # List mounts
+    cat /proc/mounts | awk '{printf "%-20s %-20s %-10s %s\n", $1, $2, $3, $4}'
+    exit 0
+fi
+
+if [ -z "$MOUNTPOINT" ]; then
+    echo "mount: missing mount point" >&2
+    usage
+fi
+
+if [ ! -d "$MOUNTPOINT" ]; then
+    echo "mount: mount point $MOUNTPOINT does not exist" >&2
+    exit 1
+fi
+
+# Try fallback to real mount if present
+if command -v mount >/dev/null 2>&1 && [ "$(command -v mount)" != "$0" ]; then
+    exec mount ${FSTYPE:+-t "$FSTYPE"} ${OPTIONS:+-o "$OPTIONS"} "$DEVICE" "$MOUNTPOINT"
+fi
+
+# Crude fallback using mount syscall wrapper — almost impossible in pure bash
+echo "No real mount binary found." >&2
+echo "Pure bash cannot call mount(2) syscall directly." >&2
+echo "You need busybox mount, util-linux mount, or similar." >&2
+exit 5
