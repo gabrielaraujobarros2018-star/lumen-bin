@@ -1,0 +1,62 @@
+#!/bin/bash
+# ifconfig - minimal network interface configuration display
+# Replacement / fallback for old ifconfig command
+# Shows basic IP, MAC, status, MTU, etc. from /sys and /proc
+
+usage() {
+    cat <<EOF
+Usage: ifconfig [interface]
+       ifconfig -a           show all interfaces
+       ifconfig -h           this help
+
+Display network interface configuration (minimal version)
+EOF
+    exit 0
+}
+
+show_interface() {
+    local iface="$1"
+    local path="/sys/class/net/$iface"
+
+    if [ ! -d "$path" ]; then
+        echo "ifconfig: $iface: No such device" >&2
+        return 1
+    fi
+
+    local operstate=$(cat "$path/operstate" 2>/dev/null || echo "unknown")
+    local mtu=$(cat "$path/mtu" 2>/dev/null || echo "unknown")
+    local mac=$(cat "$path/address" 2>/dev/null || echo "none")
+
+    # Try to get IPv4 (first one found)
+    local ip4=""
+    if command -v ip >/dev/null 2>&1; then
+        ip4=$(ip -4 addr show dev "$iface" | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+    else
+        # Fallback - very crude parsing of /proc/net/dev_snmp6 or similar
+        ip4=$(grep -A 5 "$iface:" /proc/net/dev 2>/dev/null | grep -oP 'inet addr:\K[^ ]+' || echo "")
+    fi
+
+    echo "$iface: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu $mtu"
+    [ -n "$mac" ] && echo "        ether $mac  txqueuelen 1000  ($operstate)"
+    [ -n "$ip4" ] && echo "        inet $ip4  netmask 255.255.255.0  broadcast 255.255.255.255"
+
+    # Very basic RX/TX stats
+    local rx_bytes=$(awk -v i="$iface:" '$0 \~ i {getline; print $2}' /proc/net/dev 2>/dev/null || echo 0)
+    local tx_bytes=$(awk -v i="$iface:" '$0 \~ i {getline; print $10}' /proc/net/dev 2>/dev/null || echo 0)
+    echo "        RX bytes $rx_bytes  TX bytes $tx_bytes"
+    echo ""
+}
+
+if [ $# -eq 0 ] || [ "$1" = "-a" ]; then
+    for dev in /sys/class/net/*; do
+        [ -d "$dev" ] || continue
+        iface=$(basename "$dev")
+        # Skip lo by default unless -a
+        [ "$1" != "-a" ] && [ "$iface" = "lo" ] && continue
+        show_interface "$iface"
+    done
+elif [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+else
+    show_interface "$1"
+fi
