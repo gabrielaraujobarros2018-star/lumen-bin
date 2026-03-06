@@ -1,0 +1,57 @@
+#!/bin/bash
+# insmod - insert a module into the Linux kernel
+# Very minimal version — just calls the real insmod or fallback syscalls if possible
+
+usage() {
+    cat <<EOF
+Usage: insmod module.ko [parameters...]
+       insmod -h
+
+Load a kernel module (minimal version for Lumen recovery)
+
+Note: This is a thin wrapper. Real work is done by the kernel's init_module syscall.
+EOF
+    exit 0
+}
+
+if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+fi
+
+module="$1"
+shift
+params="$*"
+
+if [ ! -f "$module" ]; then
+    echo "insmod: can't read module '$module'" >&2
+    exit 1
+fi
+
+if [ ! -r "$module" ]; then
+    echo "insmod: permission denied for '$module'" >&2
+    exit 1
+fi
+
+# Prefer real insmod if available (from busybox or kmod)
+if command -v insmod >/dev/null 2>&1 && [ "$(command -v insmod)" != "$0" ]; then
+    exec insmod "$module" $params
+fi
+
+# Fallback: try modprobe first (better dependency handling)
+if command -v modprobe >/dev/null 2>&1; then
+    modname=$(basename "$module" .ko)
+    echo "insmod: falling back to modprobe $modname $params" >&2
+    exec modprobe "$modname" $params
+fi
+
+# Pure fallback using init_module syscall via busybox or direct call (rarely works in pure bash)
+echo "insmod: no real insmod/modprobe found — attempting crude load" >&2
+
+# This almost never works in pure bash — we need a binary helper or kmod
+# But we can at least try to document what would be needed
+echo "Kernel module loading requires init_module(2) syscall." >&2
+echo "Pure bash cannot call it directly. You need:" >&2
+echo "  • busybox insmod" >&2
+echo "  • kmod/insmod" >&2
+echo "  • or a tiny C helper binary" >&2
+exit 5   # ENOTSUP / Operation not supported
