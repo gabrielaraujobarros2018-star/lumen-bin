@@ -1,0 +1,47 @@
+#!/bin/bash
+# umount - unmount filesystems
+# Very minimal umount
+
+usage() {
+    cat <<EOF
+Usage: umount target
+       umount -a                  unmount all (dangerous — not recommended)
+       umount -h
+
+Minimal umount utility for Lumen
+
+target can be: mountpoint or device
+EOF
+    exit 0
+}
+
+ALL=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -a) ALL=1 ;;
+        -h|--help) usage ;;
+        *)
+            TARGET="$1"
+            ;;
+    esac
+    shift
+done
+
+if [ $ALL -eq 1 ]; then
+    echo "umount -a is dangerous in recovery — not implemented" >&2
+    exit 1
+fi
+
+if [ -z "$TARGET" ]; then
+    usage
+fi
+
+# Prefer real umount
+if command -v umount >/dev/null 2>&1 && [ "$(command -v umount)" != "$0" ]; then
+    exec umount "$TARGET"
+fi
+
+echo "No real umount binary found." >&2
+echo "Cannot perform unmount in pure bash." >&2
+exit 5
