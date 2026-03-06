@@ -1,0 +1,100 @@
+#!/bin/bash
+# zImage - very basic zImage info / extraction tool
+# Recognizes classic piggy.gz compressed kernel (x86 mostly)
+# Helps in Lumen when dealing with extracted kernel images from distros/ISOs
+
+usage() {
+    cat <<EOF
+Usage: zImage info <zImage-file>
+       zImage extract <zImage-file> <output-vmlinuz>
+       zImage help
+
+Minimal zImage diagnostic & extraction tool for x86 kernels in Lumen
+
+Note: Only supports classic gzip-compressed piggy format (most older x86 kernels)
+Modern kernels often use xz/lz4/zstd — not supported here.
+EOF
+    exit 0
+}
+
+check_gzip_header() {
+    local file="$1"
+    # Look for gzip magic 1f 8b at \~ offset 0x200–0x300 (classic piggy location)
+    for off in 512 768 1024 2048; do
+        if xxd -p -s "$off" -l 2 "$file" | grep -q '^1f8b'; then
+            echo "$off"
+            return 0
+        fi
+    done
+    echo ""
+    return 1
+}
+
+show_zimage_info() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        echo "File not found: $file" >&2
+        exit 1
+    fi
+
+    local gzip_offset=$(check_gzip_header "$file")
+    if [ -z "$gzip_offset" ]; then
+        echo "No gzip header found → probably not a classic zImage"
+        echo "Size: $(stat -c %s "$file") bytes"
+        exit 0
+    fi
+
+    echo "zImage detected (gzip compressed payload at offset $gzip_offset)"
+    echo "  File size: $(stat -c %s "$file") bytes"
+    echo "  Compressed kernel starts at 0x$(printf %x "$gzip_offset")"
+
+    # Very rough guess at uncompressed size (not accurate)
+    local head=$(dd if="$file" bs=1 skip="$gzip_offset" count=32 2>/dev/null | xxd -p)
+    echo "  First bytes of gzip stream: $head"
+}
+
+extract_zimage() {
+    local file="$1"
+    local out="$2"
+
+    local offset=$(check_gzip_header "$file")
+    if [ -z "$offset" ]; then
+        echo "Not a recognized zImage with gzip payload" >&2
+        exit 1
+    fi
+
+    echo "Extracting compressed kernel from offset $offset..."
+    dd if="$file" bs=1 skip="$offset" of="$out.gz" 2>/dev/null
+    if gzip -d "$out.gz" -c > "$out" 2>/dev/null; then
+        echo "Successfully extracted to $out"
+        echo "Uncompressed kernel size: $(stat -c %s "$out") bytes"
+        rm -f "$out.gz"
+    else
+        echo "Decompression failed — maybe not gzip, or corrupted" >&2
+        rm -f "$out.gz"
+        exit 1
+    fi
+}
+
+case "$1" in
+    info)
+        shift
+        [ $# -eq 0 ] && usage
+        show_zimage_info "$1"
+        ;;
+    extract)
+        shift
+        if [ $# -ne 2 ]; then
+            echo "Usage: zImage extract <zImage> <output-vmlinuz>" >&2
+            exit 1
+        fi
+        extract_zimage "$1" "$2"
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac
